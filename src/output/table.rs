@@ -360,6 +360,8 @@ fn determine_time_zone() -> TZResult<TimeZone> {
     } else if let Ok(timezone) = TimeZone::from_file("/etc/localtime") {
         Ok(timezone)
     } else {
+        // TODO get timezone with WASI
+        // TODO use UTC when timezones cannot be determined
         Ok(TimeZone(Static(&StaticTimeZone{ name: "UTC", fixed_timespans: FixedTimespanSet {
             first: FixedTimespan {
                 offset: 0,
