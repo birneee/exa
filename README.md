@@ -22,6 +22,26 @@ And it’s **small**, **fast**, and just **one single binary**.
 By deliberately making some decisions differently, exa attempts to be a more featureful, more user-friendly version of `ls`.
 For more information, see [exa’s website](https://the.exa.website/).
 
+---
+
+<a id="wasm">
+<h1>Compile to WASM32-WASI</h1>
+</a>
+
+The Git feature is currently not supported.
+
+Install the Cargo WASI subcommand:
+
+    cargo install cargo-wasi
+
+Once installed, you can compile exa with Cargo:
+
+    cargo wasi build --no-default-features
+    cargo wasi test --no-default-features
+
+The exa wasm module can, for example, be executed with wasmtime:
+
+    wasmtime --dir . exa.wasm
 
 ---
 
