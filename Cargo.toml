@@ -27,14 +27,18 @@ log = "0.4"
 natord = "1.0"
 num_cpus = "1.10"
 number_prefix = "0.4"
+scoped_threadpool = { git = "https://github.com/jcaesar/scoped-threadpool-rs.git", rev = "efd06b9"}
 term_grid = "0.2.0"
 terminal_size = "0.1.16"
 unicode-width = "0.1"
-zoneinfo_compiled = { git = "https://github.com/birneee/zoneinfo-compiled.git", ref = "0102153"}
+zoneinfo_compiled = { git = "https://github.com/birneee/zoneinfo-compiled.git", rev = "0102153"}
 
 [target.'cfg(unix)'.dependencies]
 users = "0.11"
-scoped_threadpool = "0.1" # TODO make disabling threads a feature
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+users_stub = { git = "https://github.com/jcaesar/rust-users-stub.git", rev = "b492996", package = "users"}
+
 
 [dependencies.datetime]
 git = "https://github.com/birneee/datetime.git"

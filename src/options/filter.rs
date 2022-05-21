@@ -78,7 +78,7 @@ impl SortField {
             "age" | "old" | "oldest" => {
                 Self::ModifiedAge
             }
-            #[cfg(unix)]
+
             "ch" | "changed" => {
                 Self::ChangedDate
             }
@@ -88,7 +88,6 @@ impl SortField {
             "cr" | "created" => {
                 Self::CreatedDate
             }
-            #[cfg(unix)]
             "inode" => {
                 Self::FileInode
             }

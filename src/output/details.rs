@@ -66,7 +66,6 @@ use std::path::PathBuf;
 use std::vec::IntoIter as VecIntoIter;
 
 use ansi_term::Style;
-#[cfg(unix)]
 use scoped_threadpool::Pool;
 
 use crate::fs::{Dir, File};
@@ -149,10 +148,10 @@ impl<'a> AsRef<File<'a>> for Egg<'a> {
 impl<'a> Render<'a> {
     pub fn render<W: Write>(mut self, w: &mut W) -> io::Result<()> {
         let n_cpus = match num_cpus::get() as u32 {
+            0 if !cfg!(target_os = "wasi") => 0, // run on the current thread
             0 => 1,
             n => n,
         };
-        #[cfg(unix)]
         let mut pool = Pool::new(n_cpus);
         let mut rows = Vec::new();
 
@@ -174,20 +173,14 @@ impl<'a> Render<'a> {
             // This is weird, but I can’t find a way around it:
             // https://internals.rust-lang.org/t/should-option-mut-t-implement-copy/3715/6
             let mut table = Some(table);
-            #[cfg(unix)]
             self.add_files_to_table(&mut pool, &mut table, &mut rows, &self.files, TreeDepth::root());
-            #[cfg(target_os = "wasi")]
-            self.add_files_to_table_sync(&mut table, &mut rows, &self.files, TreeDepth::root());
 
             for row in self.iterate_with_table(table.unwrap(), rows) {
                 writeln!(w, "{}", row.strings())?
             }
         }
         else {
-            #[cfg(unix)]
             self.add_files_to_table(&mut pool, &mut None, &mut rows, &self.files, TreeDepth::root());
-            #[cfg(target_os = "wasi")]
-            self.add_files_to_table_sync(&mut None, &mut rows, &self.files, TreeDepth::root());
 
             for row in self.iterate(rows) {
                 writeln!(w, "{}", row.strings())?
@@ -199,7 +192,6 @@ impl<'a> Render<'a> {
 
     /// Adds files to the table, possibly recursively. This is easily
     /// parallelisable, and uses a pool of threads.
-    #[cfg(unix)]
     fn add_files_to_table<'dir>(&self, pool: &mut Pool, table: &mut Option<Table<'a>>, rows: &mut Vec<Row>, src: &[File<'dir>], depth: TreeDepth) {
         use std::sync::{Arc, Mutex};
         use log::*;
@@ -332,134 +324,6 @@ impl<'a> Render<'a> {
                     }
 
                     self.add_files_to_table(pool, table, rows, &files, depth.deeper());
-                    continue;
-                }
-            }
-
-            let count = egg.xattrs.len();
-            for (index, xattr) in egg.xattrs.into_iter().enumerate() {
-                let params = TreeParams::new(depth.deeper(), errors.is_empty() && index == count - 1);
-                let r = self.render_xattr(&xattr, params);
-                rows.push(r);
-            }
-
-            let count = errors.len();
-            for (index, (error, path)) in errors.into_iter().enumerate() {
-                let params = TreeParams::new(depth.deeper(), index == count - 1);
-                let r = self.render_error(&error, params, path);
-                rows.push(r);
-            }
-        }
-    }
-
-    /// Adds files to the table, possibly recursively. Similar to add_files_to_table but without using threads.
-    /// TODO share code with add_files_to_table
-    #[cfg(target_os = "wasi")]
-    fn add_files_to_table_sync<'dir>(&self, table: &mut Option<Table<'a>>, rows: &mut Vec<Row>, src: &[File<'dir>], depth: TreeDepth) {
-        use log::*;
-        use crate::fs::feature::xattr;
-
-        let mut file_eggs = (0..src.len()).map(|_| MaybeUninit::uninit()).collect::<Vec<_>>();
-
-        {
-            let table = table.as_ref();
-
-            for (idx, file) in src.iter().enumerate() {
-                {
-                    let mut errors = Vec::new();
-                    let mut xattrs = Vec::new();
-
-                    if xattr::ENABLED {
-                        match file.path.attributes() {
-                            Ok(xs) => {
-                                xattrs.extend(xs);
-                            }
-                            Err(e) => {
-                                if self.opts.xattr {
-                                    errors.push((e, None));
-                                } else {
-                                    error!("Error looking up xattr for {:?}: {:#?}", file.path, e);
-                                }
-                            }
-                        }
-                    }
-
-                    let table_row = table.as_ref()
-                        .map(|t| t.row_for_file(file, !xattrs.is_empty()));
-
-                    if !self.opts.xattr {
-                        xattrs.clear();
-                    }
-
-                    let mut dir = None;
-                    if let Some(r) = self.recurse {
-                        if file.is_directory() && r.tree && !r.is_too_deep(depth.0) {
-                            match file.to_dir() {
-                                Ok(d) => {
-                                    dir = Some(d);
-                                }
-                                Err(e) => {
-                                    errors.push((e, None));
-                                }
-                            }
-                        }
-                    };
-
-                    let egg = Egg { table_row, xattrs, errors, dir, file };
-                    unsafe { std::ptr::write(file_eggs[idx].as_mut_ptr(), egg) }
-                }
-            }
-        }
-
-        // this is safe because all entries have been initialized above
-        let mut file_eggs = unsafe { std::mem::transmute::<_, Vec<Egg<'_>>>(file_eggs) };
-        self.filter.sort_files(&mut file_eggs);
-
-        for (tree_params, egg) in depth.iterate_over(file_eggs.into_iter()) {
-            let mut files = Vec::new();
-            let mut errors = egg.errors;
-
-            if let (Some(ref mut t), Some(row)) = (table.as_mut(), egg.table_row.as_ref()) {
-                t.add_widths(row);
-            }
-
-            let file_name = self.file_style.for_file(egg.file, self.theme)
-                .with_link_paths()
-                .paint()
-                .promote();
-
-            let row = Row {
-                tree: tree_params,
-                cells: egg.table_row,
-                name: file_name,
-            };
-
-            rows.push(row);
-
-            if let Some(ref dir) = egg.dir {
-                for file_to_add in dir.files(self.filter.dot_filter, self.git, self.git_ignoring) {
-                    match file_to_add {
-                        Ok(f) => {
-                            files.push(f);
-                        }
-                        Err((path, e)) => {
-                            errors.push((e, Some(path)));
-                        }
-                    }
-                }
-
-                self.filter.filter_child_files(&mut files);
-
-                if !files.is_empty() {
-                    for xattr in egg.xattrs {
-                        rows.push(self.render_xattr(&xattr, TreeParams::new(depth.deeper(), false)));
-                    }
-
-                    for (error, path) in errors {
-                        rows.push(self.render_error(&error, TreeParams::new(depth.deeper(), false), path));
-                    }
-
-                    self.add_files_to_table_sync(table, rows, &files, depth.deeper());
                     continue;
                 }
             }

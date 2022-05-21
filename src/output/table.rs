@@ -11,6 +11,7 @@ use zoneinfo_compiled::{CompiledData, Result as TZResult};
 
 use lazy_static::lazy_static;
 use log::*;
+use users::UsersCache;
 
 use crate::fs::{File, fields as f};
 use crate::fs::feature::git::GitCache;
@@ -55,12 +56,10 @@ impl Columns {
     pub fn collect(&self, actually_enable_git: bool) -> Vec<Column> {
         let mut columns = Vec::with_capacity(4);
 
-        #[cfg(unix)]
         if self.inode {
             columns.push(Column::Inode);
         }
 
-        #[cfg(unix)]
         if self.octal {
             columns.push(Column::Octal);
         }
@@ -69,7 +68,6 @@ impl Columns {
             columns.push(Column::Permissions);
         }
 
-        #[cfg(unix)]
         if self.links {
             columns.push(Column::HardLinks);
         }
@@ -78,17 +76,14 @@ impl Columns {
             columns.push(Column::FileSize);
         }
 
-        #[cfg(unix)]
         if self.blocks {
             columns.push(Column::Blocks);
         }
 
-        #[cfg(unix)]
         if self.user {
             columns.push(Column::User);
         }
 
-        #[cfg(unix)]
         if self.group {
             columns.push(Column::Group);
         }
@@ -97,7 +92,6 @@ impl Columns {
             columns.push(Column::Timestamp(TimeType::Modified));
         }
 
-        #[cfg(unix)]
         if self.time_types.changed {
             columns.push(Column::Timestamp(TimeType::Changed));
         }
@@ -125,18 +119,12 @@ pub enum Column {
     Permissions,
     FileSize,
     Timestamp(TimeType),
-    #[cfg(unix)]
     Blocks,
-    #[cfg(unix)]
     User,
-    #[cfg(unix)]
     Group,
-    #[cfg(unix)]
     HardLinks,
-    #[cfg(unix)]
     Inode,
     GitStatus,
-    #[cfg(unix)]
     Octal,
 }
 
@@ -151,22 +139,12 @@ pub enum Alignment {
 impl Column {
 
     /// Get the alignment this column should use.
-    #[cfg(unix)]
     pub fn alignment(self) -> Alignment {
         match self {
             Self::FileSize   |
             Self::HardLinks  |
             Self::Inode      |
             Self::Blocks     |
-            Self::GitStatus  => Alignment::Right,
-            _                => Alignment::Left,
-        }
-    }
-
-    #[cfg(target_os = "wasi")]
-    pub fn alignment(self) -> Alignment {
-        match self {
-            Self::FileSize   |
             Self::GitStatus  => Alignment::Right,
             _                => Alignment::Left,
         }
@@ -179,18 +157,12 @@ impl Column {
             Self::Permissions   => "Permissions",
             Self::FileSize      => "Size",
             Self::Timestamp(t)  => t.header(),
-            #[cfg(unix)]
             Self::Blocks        => "Blocks",
-            #[cfg(unix)]
             Self::User          => "User",
-            #[cfg(unix)]
             Self::Group         => "Group",
-            #[cfg(unix)]
             Self::HardLinks     => "Links",
-            #[cfg(unix)]
             Self::Inode         => "inode",
             Self::GitStatus     => "Git",
-            #[cfg(unix)]
             Self::Octal         => "Octal",
         }
     }
@@ -239,7 +211,6 @@ pub enum TimeType {
     Modified,
 
     /// The file’s changed time (`st_ctime`)
-    #[cfg(unix)]
     Changed,
 
     /// The file’s accessed time (`st_atime`).
@@ -255,7 +226,6 @@ impl TimeType {
     pub fn header(self) -> &'static str {
         match self {
             Self::Modified  => "Date Modified",
-            #[cfg(unix)]
             Self::Changed   => "Date Changed",
             Self::Accessed  => "Date Accessed",
             Self::Created   => "Date Created",
@@ -306,14 +276,12 @@ pub struct Environment {
     /// offset files’ timestamps.
     tz: Option<TimeZone>,
 
-    #[cfg(unix)]
     /// Mapping cache of user IDs to usernames.
-    users: Mutex<users::UsersCache>,
+    users: Mutex<UsersCache>,
 }
 
 impl Environment {
-    #[cfg(unix)]
-    pub fn lock_users(&self) -> MutexGuard<'_, users::UsersCache> {
+    pub fn lock_users(&self) -> MutexGuard<'_, UsersCache> {
         self.users.lock().unwrap()
     }
 
@@ -331,14 +299,9 @@ impl Environment {
         let numeric = locale::Numeric::load_user_locale()
                              .unwrap_or_else(|_| locale::Numeric::english());
 
-        #[cfg(unix)]
-        let users = Mutex::new(users::UsersCache::new());
+        let users = Mutex::new(UsersCache::new());
 
-        #[cfg(unix)]
-        return Self { numeric, tz, users };
-
-        #[cfg(target_os = "wasi")]
-        return Self {numeric, tz};
+        Self { numeric, tz, users }
     }
 }
 
@@ -439,19 +402,16 @@ impl<'a, 'f> Table<'a> {
     fn permissions_plus(&self, file: &File<'_>, xattrs: bool) -> f::PermissionsPlus {
         f::PermissionsPlus {
             file_type: file.type_char(),
-            #[cfg(unix)]
             permissions: file.permissions(),
             xattrs,
         }
     }
 
-    #[cfg(unix)]
     fn octal_permissions(&self, file: &File<'_>) -> f::OctalPermissions {
         f::OctalPermissions {
             permissions: file.permissions(),
         }
     }
-
 
     fn display(&self, file: &File<'_>, column: Column, xattrs: bool) -> TextCell {
         match column {
@@ -461,30 +421,24 @@ impl<'a, 'f> Table<'a> {
             Column::FileSize => {
                 file.size().render(self.theme, self.size_format, &self.env.numeric)
             }
-            #[cfg(unix)]
             Column::HardLinks => {
                 file.links().render(self.theme, &self.env.numeric)
             }
-            #[cfg(unix)]
             Column::Inode => {
                 file.inode().render(self.theme.ui.inode)
             }
-            #[cfg(unix)]
             Column::Blocks => {
                 file.blocks().render(self.theme)
             }
-            #[cfg(unix)]
             Column::User => {
                 file.user().render(self.theme, &*self.env.lock_users(), self.user_format)
             }
-            #[cfg(unix)]
             Column::Group => {
                 file.group().render(self.theme, &*self.env.lock_users(), self.user_format)
             }
             Column::GitStatus => {
                 self.git_status(file).render(self.theme)
             }
-            #[cfg(unix)]
             Column::Octal => {
                 self.octal_permissions(file).render(self.theme.ui.octal)
             }
@@ -492,7 +446,6 @@ impl<'a, 'f> Table<'a> {
             Column::Timestamp(TimeType::Modified)  => {
                 file.modified_time().render(self.theme.ui.date, &self.env.tz, self.time_format)
             }
-            #[cfg(unix)]
             Column::Timestamp(TimeType::Changed)   => {
                 file.changed_time().render(self.theme.ui.date, &self.env.tz, self.time_format)
             }

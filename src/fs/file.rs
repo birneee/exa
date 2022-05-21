@@ -3,6 +3,8 @@
 use std::io;
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+#[cfg(target_os = "wasi")]
+use std::os::wasi::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -181,6 +183,14 @@ impl<'dir> File<'dir> {
         self.is_file() && (self.metadata.permissions().mode() & bit) == bit
     }
 
+    /// Whether this file is both a regular file *and* executable for the
+    /// current user. An executable file has a different purpose from an
+    /// executable directory, so they should be highlighted differently.
+    #[cfg(target_os = "wasi")]
+    pub fn is_executable_file(&self) -> bool {
+        false
+    }
+
     /// Whether this file is a symlink on the filesystem.
     pub fn is_link(&self) -> bool {
         self.metadata.file_type().is_symlink()
@@ -192,20 +202,23 @@ impl<'dir> File<'dir> {
         self.metadata.file_type().is_fifo()
     }
 
+    /// Whether this file is a named pipe on the filesystem.
+    #[cfg(target_os = "wasi")]
+    pub fn is_pipe(&self) -> bool {
+        false
+    }
+
     /// Whether this file is a char device on the filesystem.
-    #[cfg(unix)]
     pub fn is_char_device(&self) -> bool {
         self.metadata.file_type().is_char_device()
     }
 
     /// Whether this file is a block device on the filesystem.
-    #[cfg(unix)]
     pub fn is_block_device(&self) -> bool {
         self.metadata.file_type().is_block_device()
     }
 
     /// Whether this file is a socket on the filesystem.
-    #[cfg(unix)]
     pub fn is_socket(&self) -> bool {
         self.metadata.file_type().is_socket()
     }
@@ -276,7 +289,6 @@ impl<'dir> File<'dir> {
     /// is uncommon, while you come across directories and other types
     /// with multiple links much more often. Thus, it should get highlighted
     /// more attentively.
-    #[cfg(unix)]
     pub fn links(&self) -> f::Links {
         let count = self.metadata.nlink();
 
@@ -287,7 +299,6 @@ impl<'dir> File<'dir> {
     }
 
     /// This file’s inode.
-    #[cfg(unix)]
     pub fn inode(&self) -> f::Inode {
         f::Inode(self.metadata.ino())
     }
@@ -305,16 +316,36 @@ impl<'dir> File<'dir> {
         }
     }
 
+    /// This file’s number of filesystem blocks.
+    ///
+    /// (Not the size of each block, which we don’t actually report on)
+    #[cfg(target_os = "wasi")]
+    pub fn blocks(&self) -> f::Blocks {
+        f::Blocks::None
+    }
+
     /// The ID of the user that own this file.
     #[cfg(unix)]
     pub fn user(&self) -> f::User {
         f::User(self.metadata.uid())
     }
 
+    /// The ID of the user that own this file.
+    #[cfg(target_os = "wasi")]
+    pub fn user(&self) -> f::User {
+        f::User(0)
+    }
+
     /// The ID of the group that owns this file.
     #[cfg(unix)]
     pub fn group(&self) -> f::Group {
         f::Group(self.metadata.gid())
+    }
+
+    /// The ID of the group that owns this file.
+    #[cfg(target_os = "wasi")]
+    pub fn group(&self) -> f::Group {
+        f::Group(0)
     }
 
     /// This file’s size, if it’s a regular file.
@@ -325,35 +356,23 @@ impl<'dir> File<'dir> {
     ///
     /// Block and character devices return their device IDs, because they
     /// usually just have a file size of zero.
-    #[cfg(unix)]
     pub fn size(&self) -> f::Size {
-        if self.is_directory() {
-            f::Size::None
-        }
-        else if self.is_char_device() || self.is_block_device() {
-            let device_ids = self.metadata.rdev().to_be_bytes();
+        match {} {
+            _ if self.is_directory() => f::Size::None,
+            #[cfg(unix)]
+            _ if self.is_char_device() || self.is_block_device() => {
+                let device_ids = self.metadata.rdev().to_be_bytes();
 
-            // In C-land, getting the major and minor device IDs is done with
-            // preprocessor macros called `major` and `minor` that depend on
-            // the size of `dev_t`, but we just take the second-to-last and
-            // last bytes.
-            f::Size::DeviceIDs(f::DeviceIDs {
-                major: device_ids[6],
-                minor: device_ids[7],
-            })
-        }
-        else {
-            f::Size::Some(self.metadata.len())
-        }
-    }
-
-    #[cfg(target_os = "wasi")]
-    pub fn size(&self) -> f::Size {
-        if self.is_directory() {
-            f::Size::None
-        }
-        else {
-            f::Size::Some(self.metadata.len())
+                // In C-land, getting the major and minor device IDs is done with
+                // preprocessor macros called `major` and `minor` that depend on
+                // the size of `dev_t`, but we just take the second-to-last and
+                // last bytes.
+                f::Size::DeviceIDs(f::DeviceIDs {
+                    major: device_ids[6],
+                    minor: device_ids[7],
+                })
+            }
+            _ => f::Size::Some(self.metadata.len()),
         }
     }
 
@@ -382,6 +401,12 @@ impl<'dir> File<'dir> {
         }
     }
 
+    /// This file’s last changed timestamp, if available on this platform.
+    #[cfg(target_os = "wasi")]
+    pub fn changed_time(&self) -> Option<SystemTime> {
+        Some(UNIX_EPOCH + Duration::from_nanos(self.metadata.ctim()))
+    }
+
     /// This file’s last accessed timestamp, if available on this platform.
     pub fn accessed_time(&self) -> Option<SystemTime> {
         self.metadata.accessed().ok()
@@ -398,20 +423,29 @@ impl<'dir> File<'dir> {
     /// The file type can usually be guessed from the colour of the file, but
     /// ls puts this character there.
     pub fn type_char(&self) -> f::Type {
-        match {} {
-            _ if { self.is_file() } => f::Type::File,
-            _ if { self.is_directory() } => f::Type::Directory,
-            #[cfg(unix)]
-            _ if { self.is_pipe() } => f::Type::Pipe,
-            #[cfg(unix)]
-            _ if { self.is_link() } => f::Type::Link,
-            #[cfg(unix)]
-            _ if { self.is_char_device() } => f::Type::CharDevice,
-            #[cfg(unix)]
-            _ if { self.is_block_device() } => f::Type::BlockDevice,
-            #[cfg(unix)]
-            _ if { self.is_socket() } => f::Type::Socket,
-            _ => f::Type::Special,
+        if self.is_file() {
+            f::Type::File
+        }
+        else if self.is_directory() {
+            f::Type::Directory
+        }
+        else if self.is_pipe() {
+            f::Type::Pipe
+        }
+        else if self.is_link() {
+            f::Type::Link
+        }
+        else if self.is_char_device() {
+            f::Type::CharDevice
+        }
+        else if self.is_block_device() {
+            f::Type::BlockDevice
+        }
+        else if self.is_socket() {
+            f::Type::Socket
+        }
+        else {
+            f::Type::Special
         }
     }
 
@@ -437,6 +471,28 @@ impl<'dir> File<'dir> {
             sticky:         has_bit(modes::STICKY),
             setgid:         has_bit(modes::SETGID),
             setuid:         has_bit(modes::SETUID),
+        }
+    }
+
+    /// This file’s permissions, with flags for each bit.
+    #[cfg(target_os = "wasi")]
+    pub fn permissions(&self) -> f::Permissions {
+        f::Permissions {
+            user_read:      false,
+            user_write:     false,
+            user_execute:   false,
+
+            group_read:     false,
+            group_write:    false,
+            group_execute:  false,
+
+            other_read:     false,
+            other_write:    false,
+            other_execute:  false,
+
+            sticky:         false,
+            setgid:         false,
+            setuid:         false,
         }
     }
 

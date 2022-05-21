@@ -7,6 +7,7 @@ use crate::output::table::UserFormat;
 
 
 impl f::Group {
+    #[cfg(unix)]
     pub fn render<C: Colours, U: Users+Groups>(self, colours: &C, users: &U, format: UserFormat) -> TextCell {
         use users::os::unix::GroupExt;
 
@@ -31,6 +32,27 @@ impl f::Group {
             UserFormat::Name => group.name().to_string_lossy().into(),
             UserFormat::Numeric => group.gid().to_string(),
         };
+
+        TextCell::paint(style, group_name)
+    }
+
+    #[cfg(target_os = "wasi")]
+    pub fn render<C: Colours, U: Users+Groups>(self, colours: &C, users: &U, format: UserFormat) -> TextCell {
+        let mut style = colours.not_yours();
+
+        let group = match users.get_group_by_gid(self.0) {
+            Some(g)  => (*g).clone(),
+            None     => return TextCell::paint(style, self.0.to_string()),
+        };
+
+        let current_uid = users.get_current_uid();
+
+        let group_name = match format {
+            UserFormat::Name => group.name().to_string_lossy().into(),
+            UserFormat::Numeric => group.gid().to_string(),
+        };
+
+        style = colours.yours();
 
         TextCell::paint(style, group_name)
     }
