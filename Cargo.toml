@@ -69,7 +69,7 @@ debug = false
 # use LTO for smaller binaries (that take longer to build)
 [profile.release]
 lto = true
-
+opt-level = 's'
 
 [package.metadata.deb]
 license-file = [ "LICENCE", "4" ]
