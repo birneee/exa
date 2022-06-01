@@ -36,7 +36,7 @@ Install the Cargo WASI subcommand:
 
 Once installed, you can compile exa with Cargo:
 
-    cargo wasi build --no-default-features
+    cargo +nightly wasi build --release --no-default-features
     cargo wasi test --no-default-features
 
 The exa wasm module can, for example, be executed with wasmtime:
