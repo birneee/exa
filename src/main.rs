@@ -171,6 +171,11 @@ impl<'args> Exa<'args> {
     pub fn run(mut self) -> io::Result<i32> {
         debug!("Running with options: {:#?}", self.options);
 
+        match env::var_os("PWD") {
+            Some(pwd) => env::set_current_dir(pwd).unwrap(),
+            None => {}
+        }
+
         let mut files = Vec::new();
         let mut dirs = Vec::new();
         let mut exit_status = 0;
